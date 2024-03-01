@@ -3,6 +3,7 @@ package datastore
 import (
 	"crypto/rand"
 	"fmt"
+	"strconv"
 	"sync"
 )
 
@@ -18,6 +19,7 @@ type BookingAlreadyExits error
 type SectionIsFull error
 type SectionNotFound error
 type SeatNotAvailable error
+type InvalidSeatID error
 
 type User struct {
 	EmailAddress string // main id of the user, also subject of the JWT token
@@ -60,14 +62,47 @@ type Datastore struct {
 
 	// map of seat allocation to the user by section id and seat id
 	seatAllocation map[SectionID]Seating
+
+	// map of sections
+	sections map[SectionID]struct{}
+
+	// section size
+	sectionSize int
 }
 
-// NewDatastore creates a new instance of the Datastore
-func NewDatastore() *Datastore {
-	return &Datastore{
+type DatastoreOption func(*Datastore)
+
+// WithSectionSize sets the section size for the Datastore.
+func WithSectionSize(size int) DatastoreOption {
+	return func(ds *Datastore) {
+		ds.sectionSize = size
+	}
+}
+
+// WithSections sets the sections for the Datastore.
+func WithSections(sections ...SectionID) DatastoreOption {
+	return func(ds *Datastore) {
+		ds.sections = make(map[SectionID]struct{})
+		for _, section := range sections {
+			ds.sections[section] = struct{}{}
+		}
+	}
+}
+
+// NewDatastore creates a new instance of the Datastore with the provided options.
+func NewDatastore(options ...DatastoreOption) *Datastore {
+	ds := &Datastore{
 		bookings:       make(map[BookingID]Booking),
 		seatAllocation: make(map[SectionID]Seating),
+		sections:       map[SectionID]struct{}{SECTION_A: {}, SECTION_B: {}},
+		sectionSize:    SECTION_SIZE,
 	}
+
+	for _, option := range options {
+		option(ds)
+	}
+
+	return ds
 }
 
 // createRandomID generates a random booking id
@@ -82,12 +117,18 @@ func createRandomID() (string, error) {
 
 // allocationSeating updates the seat allocation for a given section and seat
 func (ds *Datastore) allocationSeating(sectionID SectionID, seatID SeatID, bookingID BookingID) error {
-	if sectionID != SECTION_A && sectionID != SECTION_B {
-		return fmt.Errorf("section id must be A or B: %v", sectionID)
+	// check if sectionID exists in sections
+	if _, ok := ds.sections[sectionID]; !ok {
+		return SectionNotFound(fmt.Errorf("section not found: %v", sectionID))
 	}
 
-	if len(ds.seatAllocation[sectionID]) >= SECTION_SIZE {
+	if len(ds.seatAllocation[sectionID]) >= ds.sectionSize {
 		return SectionIsFull(fmt.Errorf("section is full: %v", sectionID))
+	}
+
+	// convert seatID to int and check if it is within the section size
+	if seat, err := strconv.Atoi(string(seatID)); err != nil || seat < 0 || seat > ds.sectionSize {
+		return InvalidSeatID(fmt.Errorf("invalid seat id: %v", seatID))
 	}
 
 	if _, ok := ds.seatAllocation[sectionID]; !ok {
@@ -186,13 +227,6 @@ func (ds *Datastore) removeUserFromTrain(bookingID BookingID) error {
 		return SectionNotFound(fmt.Errorf("section not found: %v", section))
 	}
 
-	// If booking exists then section and seat must exist
-	// // check if seat is in the section
-	// _, ok = seating[seat]
-	// if !ok {
-	// 	return fmt.Errorf("seat not found: %v", seat)
-	// }
-
 	// remove the seat
 	delete(seating, seat)
 
@@ -218,10 +252,6 @@ func (ds *Datastore) modifySeat(bookingID BookingID, sectionID SectionID, seatID
 	if !ok {
 		return Booking{}, fmt.Errorf("booking not found: %v", bookingID)
 	}
-
-	// if _, ok := ds.seatAllocation[sectionID]; !ok {
-	// 	ds.seatAllocation[sectionID] = make(Seating)
-	// }
 
 	// Remove the existing seat allocation
 	if err := ds.removeUserFromTrain(bookingID); err != nil {

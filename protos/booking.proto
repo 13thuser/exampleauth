@@ -17,17 +17,8 @@ message Seat {
 message PurchaseRequest{
   User user = 1;
   Seat seat = 2;
-  // double price_paid = 4;
-  // PaymentDetails payment_details = 5;
+  // You can also include PaymentDetails
 }
-
-// message PaymentDetails {
-//   string card_first_name = 1;
-//   string card_last_name = 2;
-//   string card_info = 3;
-//   string card_expiry = 4;
-//   int32 card_ccv = 5;
-// }
 
 message Booking {
   string booking_id = 1;
@@ -38,27 +29,15 @@ message Booking {
   double price_paid = 6;
 }
 
-// message UserList {
-//   repeated User users = 1;
-// }
-
-// message SeatList {
-//   repeated Seat seats = 1;
-// }
 
 message GetBookingsBySectionRequest {
   string section = 1;
 }
-// message GetUsersAndSeatsResponse {
-//   UserList userList = 1;
-//   SeatList seatList = 2;
-// }
 
 message ModifySeatRequest {
-  string user_email = 1;
-  string booking_id = 2;
-  string new_seat_id = 3;
-  string new_section_id = 4;
+  string booking_id = 1;
+  string new_seat_id = 2;
+  string new_section_id = 3;
 }
 
 message RemoveBookingRequest {

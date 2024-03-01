@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -20,14 +21,13 @@ const bufSize = 1024 * 1024 // 1MB
 
 // createTestServer creates a new gRPC server and returns a client
 // to communicate with the server
-func createTestServer(ctx context.Context, t *testing.T) (pb.BookingServiceClient, func()) {
+func createTestServer(t *testing.T, ctx context.Context, db *datastore.Datastore) (pb.BookingServiceClient, func()) {
 	lis := bufconn.Listen(bufSize)
 
 	srvr := grpc.NewServer(
 		grpc.UnaryInterceptor(validateTokenUnaryInterceptor),
 		grpc.StreamInterceptor(validateTokenStreamInterceptor),
 	)
-	db := datastore.NewDatastore()
 	pb.RegisterBookingServiceServer(srvr, NewBookingServer(db))
 
 	go func(t *testing.T) {
@@ -97,7 +97,10 @@ func TestBookingServer_Purchase(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a test server and get the client
-	client, closer := createTestServer(ctx, t)
+	db := datastore.NewDatastore(
+		datastore.WithSections("A"),
+		datastore.WithSectionSize(2))
+	client, closer := createTestServer(t, ctx, db)
 	defer closer()
 
 	tests := map[string]struct {
@@ -121,9 +124,37 @@ func TestBookingServer_Purchase(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		"invalid section": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "C", // invalid section
+				SeatId:    "1",
+			},
+			wantErr: true,
+		},
+		"invalid seat": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "3", // invalid seat
+			},
+			wantErr: true,
+		},
 		"non-admin user purchase": {
 			subject: "user@example.com",
-			isAdmin: true,
+			isAdmin: false,
 			user: &pb.User{
 				EmailAddress: "user@example.com",
 				FirstName:    "john",
@@ -148,6 +179,367 @@ func TestBookingServer_Purchase(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+		})
+	}
+}
+
+func TestBookingServer_PurchaseWhenSectionIsFull(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a test server and get the client
+	db := datastore.NewDatastore(
+		datastore.WithSections("A", "B"),
+		datastore.WithSectionSize(1))
+	client, closer := createTestServer(t, ctx, db)
+	defer closer()
+
+	tests := map[string]struct {
+		subject string
+		isAdmin bool
+		user    *pb.User
+		seat    *pb.Seat
+		wantErr bool
+	}{
+		"when space is available": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "1",
+			},
+			wantErr: false,
+		},
+		"section is full": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "2",
+			},
+			wantErr: true,
+		},
+		"book in another section": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "B",
+				SeatId:    "1",
+			},
+			wantErr: false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+			response, err := client.Purchase(ctx, &pb.PurchaseRequest{
+				User: tt.user,
+				Seat: tt.seat,
+			})
+			t.Logf("name: %v \n\tResponse: %+v\n", name, response)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+}
+
+func TestBookingServer_GetBookingsBySection(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a test server and get the client
+	db := datastore.NewDatastore(
+		datastore.WithSections("A", "B"),
+		datastore.WithSectionSize(2))
+	client, closer := createTestServer(t, ctx, db)
+	defer closer()
+
+	tests := map[string]struct {
+		subject      string
+		isAdmin      bool
+		user         *pb.User
+		seat         *pb.Seat
+		querySection string
+		wantErr      bool
+	}{
+		"admin gets bookings by section": {
+			subject: "adminuser@example.com",
+			isAdmin: true,
+			user: &pb.User{
+				EmailAddress: "adminuser@example.com",
+				FirstName:    "admin",
+				LastName:     "user",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "1",
+			},
+			querySection: "A",
+			wantErr:      false,
+		},
+		"non-admin cannot get bookings by section": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "2",
+			},
+			querySection: "A",
+			wantErr:      true,
+		},
+	}
+
+	numBookings := 0
+
+	// Create bookings
+	for _, tt := range tests {
+		ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+		_, err := client.Purchase(ctx, &pb.PurchaseRequest{
+			User: tt.user,
+			Seat: tt.seat,
+		})
+		if err != nil {
+			t.Fatalf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+		}
+		t.Logf("Created booking for user: %v", tt.user.EmailAddress)
+		numBookings++
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+			stream, err := client.GetBookingsBySection(ctx, &pb.GetBookingsBySectionRequest{
+				Section: tt.querySection,
+			})
+			if err != nil {
+				t.Fatalf("unable to get stream for GetBookingsBySection: %v", err)
+			}
+			if tt.wantErr {
+				_, err := stream.Recv()
+				if err == nil {
+					t.Errorf("GetBookingsBySection() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				// t.Logf("GetBookingsBySection() error = %v, wantErr %v", err, tt.wantErr)
+			} else {
+				gotNumBookings := 0
+				for {
+					booking, err := stream.Recv()
+					if err == io.EOF {
+						break
+					} else if err != nil {
+						break
+					}
+					t.Logf("Booking: %+v", booking)
+					gotNumBookings++
+				}
+				if gotNumBookings != numBookings {
+					t.Errorf("GetBookingsBySection() gotNumBookings = %v, want %v", gotNumBookings, numBookings)
+				}
+			}
+		})
+	}
+}
+
+func TestBookingServer_RemoveUserFromTrain(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a test server and get the client
+	db := datastore.NewDatastore(
+		datastore.WithSections("A", "B"),
+		datastore.WithSectionSize(2))
+	client, closer := createTestServer(t, ctx, db)
+	defer closer()
+
+	tests := map[string]struct {
+		subject      string
+		isAdmin      bool
+		user         *pb.User
+		seat         *pb.Seat
+		newSeatId    string
+		NewSectionId string
+		wantErr      bool
+	}{
+		"admin able to remove user from the train": {
+			subject: "adminuser@example.com",
+			isAdmin: true,
+			user: &pb.User{
+				EmailAddress: "adminuser@example.com",
+				FirstName:    "admin",
+				LastName:     "user",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "1",
+			},
+			wantErr: false,
+		},
+		"non-admin user cannot remove user from the train": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "2",
+			},
+			wantErr: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+			booking, err := client.Purchase(ctx, &pb.PurchaseRequest{
+				User: tt.user,
+				Seat: tt.seat,
+			})
+			if err != nil {
+				t.Fatalf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			bookingID := booking.BookingId
+
+			// Remove the user
+			_, err = client.RemoveUserFromTrain(ctx, &pb.RemoveBookingRequest{
+				BookingId: bookingID,
+			})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				// Get all the seats from that section and check if the seat still available
+				section := booking.Seat.SectionId
+
+				stream, err := client.GetBookingsBySection(ctx, &pb.GetBookingsBySectionRequest{
+					Section: section,
+				})
+				if err != nil {
+					t.Fatalf("unable to get stream for GetBookingsBySection: %v", err)
+				}
+
+				// Check if the booking is still in the section
+				for {
+					booking, err := stream.Recv()
+					if err == io.EOF {
+						break
+					} else if err != nil {
+						break
+					}
+					if booking.BookingId == bookingID {
+						t.Errorf("RemoveUserFromTrain() booking still exists in section: %v", section)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestBookingServer_ModifySeat(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a test server and get the client
+	db := datastore.NewDatastore(
+		datastore.WithSections("A", "B"),
+		datastore.WithSectionSize(2))
+	client, closer := createTestServer(t, ctx, db)
+	defer closer()
+
+	tests := map[string]struct {
+		subject      string
+		isAdmin      bool
+		user         *pb.User
+		seat         *pb.Seat
+		newSeatId    string
+		NewSectionId string
+		wantErr      bool
+	}{
+		"admin able to modify seat": {
+			subject: "adminuser@example.com",
+			isAdmin: true,
+			user: &pb.User{
+				EmailAddress: "adminuser@example.com",
+				FirstName:    "admin",
+				LastName:     "user",
+			},
+			seat: &pb.Seat{
+				SectionId: "A",
+				SeatId:    "1",
+			},
+			newSeatId:    "2",
+			NewSectionId: "B",
+			wantErr:      false,
+		},
+		"non-admin user cannot modify seat": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seat: &pb.Seat{
+				SectionId: "B",
+				SeatId:    "1",
+			},
+			newSeatId:    "2",
+			NewSectionId: "B",
+			wantErr:      true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+			booking, err := client.Purchase(ctx, &pb.PurchaseRequest{
+				User: tt.user,
+				Seat: tt.seat,
+			})
+			if err != nil {
+				t.Fatalf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			updatedBooking, err := client.ModifySeat(ctx, &pb.ModifySeatRequest{
+				BookingId:    booking.BookingId,
+				NewSeatId:    tt.newSeatId,
+				NewSectionId: tt.NewSectionId,
+			})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				if updatedBooking.Seat.SeatId != tt.newSeatId {
+					t.Errorf("ModifySeat() updated seat id = %v, want %v", updatedBooking.Seat.SeatId, tt.newSeatId)
+				}
+				if updatedBooking.Seat.SectionId != tt.NewSectionId {
+					t.Errorf("ModifySeat() updated section id = %v, want %v", updatedBooking.Seat.SectionId, tt.NewSectionId)
+				}
 			}
 		})
 	}
