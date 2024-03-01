@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -47,7 +47,7 @@ func tokenValidator(ctx context.Context) (context.Context, error) {
 		return nil, status.Errorf(codes.Unauthenticated, "invalid JWT token")
 	}
 
-	fmt.Printf("Claims: %v\n", claims)
+	log.Printf("Claims: %v\n", claims)
 
 	// Access the sub and is_admin claims and add them to the context
 	ctx = context.WithValue(ctx, emailIDKey, claims["sub"])

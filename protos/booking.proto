@@ -61,12 +61,16 @@ message ModifySeatRequest {
   string new_section_id = 4;
 }
 
+message RemoveBookingRequest {
+  string booking_id = 1;
+}
+
 service BookingService {
   // Public APIs (Note: required user to be logged in to use these APIs)
   rpc Purchase(PurchaseRequest) returns (Booking) {}
 
   // Admin APIs
   rpc GetBookingsBySection(GetBookingsBySectionRequest) returns (stream Booking) {}
-  rpc RemoveUserFromTrain(User) returns (google.protobuf.Empty) {}
+  rpc RemoveUserFromTrain(RemoveBookingRequest) returns (google.protobuf.Empty) {}
   rpc ModifySeat(ModifySeatRequest) returns (Booking) {}
 }

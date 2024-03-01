@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,7 +16,7 @@ import (
 type BookingServer struct {
 	pb.UnimplementedBookingServiceServer
 
-	// Datastore
+	// Datastore - it can be interface to support different implementations
 	db *datastore.Datastore
 }
 
@@ -47,10 +47,10 @@ func (s *BookingServer) isAdmin(ctx context.Context) bool {
 
 // Implement the gRPC service methods
 func (s *BookingServer) Purchase(ctx context.Context, req *pb.PurchaseRequest) (*pb.Booking, error) {
-	fmt.Printf("Received: %v\n", req)
+	log.Printf("Received: %v\n", req)
 
 	// Make sure user is authenticated. non-admin can work too.
-	emailID, authenticated := s.isUserAuthenticated(ctx)
+	_, authenticated := s.isUserAuthenticated(ctx)
 	if !authenticated {
 		return nil, status.Errorf(codes.Unauthenticated, "user is not authenticated")
 	}
@@ -70,7 +70,7 @@ func (s *BookingServer) Purchase(ctx context.Context, req *pb.PurchaseRequest) (
 		PricePaid: 20.00, // Currency field is eliminated because of timing constraints
 	}
 
-	booking, err := s.db.Purchase(emailID, booking)
+	booking, err := s.db.Purchase(booking)
 	if err != nil {
 		return nil, status.Errorf(codes.Unknown, "failed to purchase: %v", err)
 	}
@@ -127,12 +127,51 @@ func (s *BookingServer) GetBookingsBySection(req *pb.GetBookingsBySectionRequest
 	return nil
 }
 
-func (s *BookingServer) RemoveUserFromTrain(ctx context.Context, req *pb.User) (*emptypb.Empty, error) {
-	// Your logic here
-	return nil, status.Errorf(codes.Unimplemented, "method RemoveUser not implemented")
+func (s *BookingServer) RemoveUserFromTrain(ctx context.Context, req *pb.RemoveBookingRequest) (*emptypb.Empty, error) {
+	log.Printf("Received: %v\n", req)
+
+	// Check if the user is an admin
+	if !s.isAdmin(ctx) {
+		return nil, status.Errorf(codes.Unauthenticated, "user is not authenticated")
+	}
+
+	// Remove the user from the train
+	err := s.db.RemoveUserFromTrain(datastore.BookingID(req.BookingId))
+	if err != nil {
+		return nil, status.Errorf(codes.Unknown, "failed to remove user with booking ID (%v) from train: %v", req.BookingId, err)
+	}
+
+	return nil, nil
 }
 
 func (s *BookingServer) ModifySeat(ctx context.Context, req *pb.ModifySeatRequest) (*pb.Booking, error) {
-	// Your logic here
-	return nil, status.Errorf(codes.Unimplemented, "method ModifySeat not implemented")
+	log.Printf("Received: %v\n", req)
+
+	// Check if the user is an admin
+	if !s.isAdmin(ctx) {
+		return nil, status.Errorf(codes.Unauthenticated, "user is not authenticated")
+	}
+
+	booking, err := s.db.ModifySeat(datastore.BookingID(req.BookingId), datastore.SectionID(req.NewSectionId), datastore.SeatID(req.NewSeatId))
+	if err != nil {
+		return nil, status.Errorf(codes.Unknown, "failed to modify seat: %v", err)
+	}
+
+	updatedBooking := &pb.Booking{
+		BookingId: booking.BookingID,
+		User: &pb.User{
+			EmailAddress: booking.User.EmailAddress,
+			FirstName:    booking.User.FirstName,
+			LastName:     booking.User.LastName,
+		},
+		Seat: &pb.Seat{
+			SectionId: booking.Seat.SectionID,
+			SeatId:    booking.Seat.SeatID,
+		},
+		From:      booking.From,
+		To:        booking.To,
+		PricePaid: booking.PricePaid,
+	}
+
+	return updatedBooking, nil
 }

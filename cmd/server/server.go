@@ -11,11 +11,13 @@ import (
 	pb "github.com/13thuser/exampleauth/grpc"
 )
 
+// Define the gRPC server port. You can also use a configuration file or environment variables
 var GRPC_SERVER_PORT = "50051"
 
 func main() {
 	// Create a new gRPC server with an interceptor
 	server := grpc.NewServer(
+		// Interceptors to validate the JWT token
 		grpc.UnaryInterceptor(validateTokenUnaryInterceptor),
 		grpc.StreamInterceptor(validateTokenStreamInterceptor),
 	)

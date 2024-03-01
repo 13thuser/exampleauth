@@ -27,7 +27,7 @@ type BookingServiceClient interface {
 	Purchase(ctx context.Context, in *PurchaseRequest, opts ...grpc.CallOption) (*Booking, error)
 	// Admin APIs
 	GetBookingsBySection(ctx context.Context, in *GetBookingsBySectionRequest, opts ...grpc.CallOption) (BookingService_GetBookingsBySectionClient, error)
-	RemoveUserFromTrain(ctx context.Context, in *User, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RemoveUserFromTrain(ctx context.Context, in *RemoveBookingRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ModifySeat(ctx context.Context, in *ModifySeatRequest, opts ...grpc.CallOption) (*Booking, error)
 }
 
@@ -80,7 +80,7 @@ func (x *bookingServiceGetBookingsBySectionClient) Recv() (*Booking, error) {
 	return m, nil
 }
 
-func (c *bookingServiceClient) RemoveUserFromTrain(ctx context.Context, in *User, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *bookingServiceClient) RemoveUserFromTrain(ctx context.Context, in *RemoveBookingRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, "/BookingService/RemoveUserFromTrain", in, out, opts...)
 	if err != nil {
@@ -106,7 +106,7 @@ type BookingServiceServer interface {
 	Purchase(context.Context, *PurchaseRequest) (*Booking, error)
 	// Admin APIs
 	GetBookingsBySection(*GetBookingsBySectionRequest, BookingService_GetBookingsBySectionServer) error
-	RemoveUserFromTrain(context.Context, *User) (*emptypb.Empty, error)
+	RemoveUserFromTrain(context.Context, *RemoveBookingRequest) (*emptypb.Empty, error)
 	ModifySeat(context.Context, *ModifySeatRequest) (*Booking, error)
 	mustEmbedUnimplementedBookingServiceServer()
 }
@@ -121,7 +121,7 @@ func (UnimplementedBookingServiceServer) Purchase(context.Context, *PurchaseRequ
 func (UnimplementedBookingServiceServer) GetBookingsBySection(*GetBookingsBySectionRequest, BookingService_GetBookingsBySectionServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetBookingsBySection not implemented")
 }
-func (UnimplementedBookingServiceServer) RemoveUserFromTrain(context.Context, *User) (*emptypb.Empty, error) {
+func (UnimplementedBookingServiceServer) RemoveUserFromTrain(context.Context, *RemoveBookingRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveUserFromTrain not implemented")
 }
 func (UnimplementedBookingServiceServer) ModifySeat(context.Context, *ModifySeatRequest) (*Booking, error) {
@@ -180,7 +180,7 @@ func (x *bookingServiceGetBookingsBySectionServer) Send(m *Booking) error {
 }
 
 func _BookingService_RemoveUserFromTrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(User)
+	in := new(RemoveBookingRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func _BookingService_RemoveUserFromTrain_Handler(srv interface{}, ctx context.Co
 		FullMethod: "/BookingService/RemoveUserFromTrain",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BookingServiceServer).RemoveUserFromTrain(ctx, req.(*User))
+		return srv.(BookingServiceServer).RemoveUserFromTrain(ctx, req.(*RemoveBookingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
