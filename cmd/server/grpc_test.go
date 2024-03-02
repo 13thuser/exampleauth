@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/13thuser/exampleauth/datastore"
 	pb "github.com/13thuser/exampleauth/grpc"
@@ -98,7 +99,7 @@ func TestBookingServer_Purchase(t *testing.T) {
 
 	// Create a test server and get the client
 	db := datastore.NewDatastore(
-		datastore.WithSections("A"),
+		datastore.WithSections("A", "B"),
 		datastore.WithSectionSize(2))
 	client, closer := createTestServer(t, ctx, db)
 	defer closer()
@@ -110,6 +111,20 @@ func TestBookingServer_Purchase(t *testing.T) {
 		seat    *pb.Seat
 		wantErr bool
 	}{
+		"guest user purchase": {
+			subject: "",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "guest@example.com",
+				FirstName:    "guest",
+				LastName:     "user",
+			},
+			seat: &pb.Seat{
+				SectionId: "B",
+				SeatId:    "1",
+			},
+			wantErr: false,
+		},
 		"admin purchase": {
 			subject: "adminuser@example.com",
 			isAdmin: true,
@@ -170,12 +185,14 @@ func TestBookingServer_Purchase(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
-			response, err := client.Purchase(ctx, &pb.PurchaseRequest{
+			ctx := context.Background()
+			if tt.subject != "" {
+				ctx = getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+			}
+			_, err := client.Purchase(ctx, &pb.PurchaseRequest{
 				User: tt.user,
 				Seat: tt.seat,
 			})
-			t.Logf("name: %v \n\tResponse: %+v\n", name, response)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -256,6 +273,112 @@ func TestBookingServer_PurchaseWhenSectionIsFull(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+		})
+	}
+}
+
+func TestBookingServer_GetUserBookings(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a test server and get the client
+	db := datastore.NewDatastore(
+		datastore.WithSections("A", "B"),
+		datastore.WithSectionSize(2))
+	client, closer := createTestServer(t, ctx, db)
+	defer closer()
+
+	tests := map[string]struct {
+		subject        string
+		isAdmin        bool
+		user           *pb.User
+		seats          []*pb.Seat
+		wantErr        bool
+		wantSeatsCount int
+	}{
+		"admin gets user bookings": {
+			subject: "adminuser@example.com",
+			isAdmin: true,
+			user: &pb.User{
+				EmailAddress: "adminuser@example.com",
+				FirstName:    "admin",
+				LastName:     "user",
+			},
+			seats: []*pb.Seat{
+				{
+					SectionId: "A",
+					SeatId:    "1",
+				},
+				{
+					SectionId: "B",
+					SeatId:    "1",
+				},
+			},
+			wantErr:        false,
+			wantSeatsCount: 2,
+		},
+		"non-admin get user bookings": {
+			subject: "user@example.com",
+			isAdmin: false,
+			user: &pb.User{
+				EmailAddress: "user@example.com",
+				FirstName:    "john",
+				LastName:     "doe",
+			},
+			seats: []*pb.Seat{
+				{
+					SectionId: "A",
+					SeatId:    "2",
+				},
+				{
+					SectionId: "B",
+					SeatId:    "2",
+				},
+			},
+			wantErr:        false,
+			wantSeatsCount: 2,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := getCtxWithToken(t, ctx, tt.subject, tt.isAdmin)
+			// Create the bookings
+			for _, seat := range tt.seats {
+				_, err := client.Purchase(ctx, &pb.PurchaseRequest{
+					User: tt.user,
+					Seat: seat,
+				})
+				if err != nil {
+					t.Fatalf("Purchase() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				t.Logf("Created booking for user: %v", tt.user.EmailAddress)
+			}
+			// Get user bookings
+			stream, err := client.GetUserBookings(ctx, &emptypb.Empty{})
+			if err != nil {
+				t.Fatalf("unable to get stream for GetUserBookings: %v", err)
+			}
+			if tt.wantErr {
+				_, err := stream.Recv()
+				if err == nil {
+					t.Errorf("GetUserBookings() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				// t.Logf("GetUserBookings() error = %v, wantErr %v", err, tt.wantErr)
+			} else {
+				gotNumBookings := 0
+				for {
+					booking, err := stream.Recv()
+					if err == io.EOF {
+						break
+					} else if err != nil {
+						break
+					}
+					t.Logf("Booking: %+v", booking)
+					gotNumBookings++
+				}
+				if gotNumBookings != tt.wantSeatsCount {
+					t.Errorf("GetUserBookings() gotNumBookings = %v, want %v", gotNumBookings, tt.wantSeatsCount)
+				}
 			}
 		})
 	}

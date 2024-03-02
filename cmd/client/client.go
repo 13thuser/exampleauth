@@ -1,8 +1,8 @@
 package main
 
 import (
-	"io"
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -86,12 +86,59 @@ func main() {
 		log.Fatalf("Failed to get bookings by section: %v", err)
 	}
 	for {
-        response, err := stream.Recv()
-        if err == io.EOF {
-            break
-        } else if err != nil {
+		response, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
 			log.Fatalf("Failed to receive a response: %v", err)
 		}
-        log.Printf("Received streaming message: %v\n", response)
-    }
+		log.Printf("Received streaming message: %v\n", response)
+	}
+
+	// Remove the user from the train
+	// Create a new context with the JWT token as metadata
+	ctx = metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", token))
+
+	bookingID := response.BookingId
+	if _, err := c.RemoveUserFromTrain(ctx, &pb.RemoveBookingRequest{BookingId: bookingID}); err != nil {
+		log.Fatalf("Failed to remove user from train: %v", err)
+	}
+	log.Printf("Removed user from train: %v", bookingID)
+
+	response, err = c.Purchase(ctx, &pb.PurchaseRequest{
+		User: &pb.User{
+			EmailAddress: "test@example.com",
+			FirstName:    "test",
+			LastName:     "user",
+		},
+		Seat: &pb.Seat{
+			SectionId: "A",
+			SeatId:    "2",
+		},
+	})
+	if err != nil {
+		// Handle error
+		statusErr, ok := status.FromError(err)
+		if ok && statusErr.Code() == codes.Unauthenticated {
+			log.Fatalf("Authentication failed: %v", err)
+		} else {
+			log.Fatalf("RPC error: %v", err)
+		}
+	}
+
+	// Process the response
+	log.Printf("Response: %v", response)
+
+	bookingID = response.BookingId
+	// Modify seat
+	response, err = c.ModifySeat(ctx, &pb.ModifySeatRequest{
+		BookingId:    bookingID,
+		NewSeatId:    "3",
+		NewSectionId: "A",
+	})
+	if err != nil {
+		log.Fatalf("Failed to modify seat: %v", err)
+	}
+	log.Printf("Modified seat: %v", response)
+
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -19,6 +20,9 @@ const (
 	emailIDKey contextKey = "email_id"
 	isAdminKey contextKey = "is_admin"
 )
+
+// You can also use a configuration file or environment variables
+var PublicURLs = []string{"/BookingService/Purchase"}
 
 // tokenValidator is a helper function to validate the JWT token
 func tokenValidator(ctx context.Context) (context.Context, error) {
@@ -60,6 +64,13 @@ func tokenValidator(ctx context.Context) (context.Context, error) {
 func validateTokenUnaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	if _, ok := metadata.FromIncomingContext(ctx); !ok {
 		return nil, status.Errorf(codes.Unauthenticated, "metadata is not provided")
+	}
+
+	// check if incoming request is a public URL
+	for _, url := range PublicURLs {
+		if strings.Contains(info.FullMethod, url) {
+			return handler(ctx, req)
+		}
 	}
 
 	// Validate the token and create a new context

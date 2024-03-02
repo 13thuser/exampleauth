@@ -33,6 +33,7 @@ type Seat struct {
 }
 
 type Booking struct {
+	owner     string
 	BookingID string
 	User      User
 	Seat      Seat
@@ -45,6 +46,7 @@ type BookingID string
 type SectionID string
 type SeatID string
 type Seating map[SeatID]BookingID
+type BookingsMap map[BookingID]struct{}
 
 // Current implementation of the Datastore is narrow in scope and only supports the following operations:
 // - Purchase: Adds a new booking to the datastore
@@ -56,6 +58,7 @@ type Datastore struct {
 	sync.RWMutex
 
 	// You can also map the user to the booking id to track all the users
+	userBookings map[string]BookingsMap
 
 	// map of booking ID to booking that contains the user and
 	bookings map[BookingID]Booking
@@ -92,6 +95,7 @@ func WithSections(sections ...SectionID) DatastoreOption {
 // NewDatastore creates a new instance of the Datastore with the provided options.
 func NewDatastore(options ...DatastoreOption) *Datastore {
 	ds := &Datastore{
+		userBookings:   make(map[string]BookingsMap),
 		bookings:       make(map[BookingID]Booking),
 		seatAllocation: make(map[SectionID]Seating),
 		sections:       map[SectionID]struct{}{SECTION_A: {}, SECTION_B: {}},
@@ -145,7 +149,7 @@ func (ds *Datastore) allocationSeating(sectionID SectionID, seatID SeatID, booki
 }
 
 // Purchase adds a new booking to the datastore
-func (ds *Datastore) Purchase(booking Booking) (Booking, error) {
+func (ds *Datastore) Purchase(userID string, booking Booking) (Booking, error) {
 	// Concurrency support
 	ds.Lock()
 	defer ds.Unlock()
@@ -154,13 +158,39 @@ func (ds *Datastore) Purchase(booking Booking) (Booking, error) {
 		return Booking{}, fmt.Errorf("booking id must be empty: %v", booking.BookingID)
 	}
 
-	return ds.createBooking(booking)
+	return ds.createBooking(userID, booking)
+}
+
+func (ds *Datastore) GetUserBookings(userID string) []Booking {
+	// Concurrency support
+	ds.RLock()
+	defer ds.RUnlock()
+
+	return ds.getUserBookings(userID)
+}
+
+// Internal get user bookings function
+func (ds *Datastore) getUserBookings(userID string) []Booking {
+	var bookings []Booking
+	for bookingID := range ds.userBookings[userID] {
+		bookings = append(bookings, ds.bookings[bookingID])
+	}
+	return bookings
 }
 
 // Internal purchase function
-func (ds *Datastore) createBooking(booking Booking) (Booking, error) {
+func (ds *Datastore) createBooking(userID string, booking Booking) (Booking, error) {
+	// Make sure use has bookings map
+	if _, ok := ds.userBookings[userID]; !ok {
+		ds.userBookings[userID] = make(BookingsMap)
+	}
 	bookingID := BookingID(booking.BookingID)
-	if bookingID == "" {
+	if bookingID != "" {
+		// check if not admin then check if the user is the owner of the booking
+		if _, ok := ds.userBookings[userID][bookingID]; !ok {
+			return Booking{}, BookingNotFound(fmt.Errorf("booking not found: %v", bookingID))
+		}
+	} else {
 		// create a new booking id
 		id, err := createRandomID()
 		if err != nil {
@@ -173,7 +203,9 @@ func (ds *Datastore) createBooking(booking Booking) (Booking, error) {
 		return Booking{}, fmt.Errorf("failed to allocate seating: %v", err)
 	}
 
+	booking.owner = userID
 	ds.bookings[bookingID] = booking
+	ds.userBookings[userID][bookingID] = struct{}{}
 	return booking, nil
 }
 
@@ -264,7 +296,7 @@ func (ds *Datastore) modifySeat(bookingID BookingID, sectionID SectionID, seatID
 		SeatID:    string(seatID),
 	}
 
-	updatedBooking, err := ds.createBooking(booking)
+	updatedBooking, err := ds.createBooking(booking.owner, booking)
 	if err != nil {
 		return Booking{}, err
 	}

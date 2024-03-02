@@ -23,8 +23,10 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BookingServiceClient interface {
-	// Public APIs (Note: required user to be logged in to use these APIs)
+	// Public APIs (Guest can use this)
 	Purchase(ctx context.Context, in *PurchaseRequest, opts ...grpc.CallOption) (*Booking, error)
+	// Gets bookings made by current user (user must be authenticated)
+	GetUserBookings(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (BookingService_GetUserBookingsClient, error)
 	// Admin APIs
 	GetBookingsBySection(ctx context.Context, in *GetBookingsBySectionRequest, opts ...grpc.CallOption) (BookingService_GetBookingsBySectionClient, error)
 	RemoveUserFromTrain(ctx context.Context, in *RemoveBookingRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -48,8 +50,40 @@ func (c *bookingServiceClient) Purchase(ctx context.Context, in *PurchaseRequest
 	return out, nil
 }
 
+func (c *bookingServiceClient) GetUserBookings(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (BookingService_GetUserBookingsClient, error) {
+	stream, err := c.cc.NewStream(ctx, &BookingService_ServiceDesc.Streams[0], "/BookingService/GetUserBookings", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &bookingServiceGetUserBookingsClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type BookingService_GetUserBookingsClient interface {
+	Recv() (*Booking, error)
+	grpc.ClientStream
+}
+
+type bookingServiceGetUserBookingsClient struct {
+	grpc.ClientStream
+}
+
+func (x *bookingServiceGetUserBookingsClient) Recv() (*Booking, error) {
+	m := new(Booking)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func (c *bookingServiceClient) GetBookingsBySection(ctx context.Context, in *GetBookingsBySectionRequest, opts ...grpc.CallOption) (BookingService_GetBookingsBySectionClient, error) {
-	stream, err := c.cc.NewStream(ctx, &BookingService_ServiceDesc.Streams[0], "/BookingService/GetBookingsBySection", opts...)
+	stream, err := c.cc.NewStream(ctx, &BookingService_ServiceDesc.Streams[1], "/BookingService/GetBookingsBySection", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,8 +136,10 @@ func (c *bookingServiceClient) ModifySeat(ctx context.Context, in *ModifySeatReq
 // All implementations must embed UnimplementedBookingServiceServer
 // for forward compatibility
 type BookingServiceServer interface {
-	// Public APIs (Note: required user to be logged in to use these APIs)
+	// Public APIs (Guest can use this)
 	Purchase(context.Context, *PurchaseRequest) (*Booking, error)
+	// Gets bookings made by current user (user must be authenticated)
+	GetUserBookings(*emptypb.Empty, BookingService_GetUserBookingsServer) error
 	// Admin APIs
 	GetBookingsBySection(*GetBookingsBySectionRequest, BookingService_GetBookingsBySectionServer) error
 	RemoveUserFromTrain(context.Context, *RemoveBookingRequest) (*emptypb.Empty, error)
@@ -117,6 +153,9 @@ type UnimplementedBookingServiceServer struct {
 
 func (UnimplementedBookingServiceServer) Purchase(context.Context, *PurchaseRequest) (*Booking, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Purchase not implemented")
+}
+func (UnimplementedBookingServiceServer) GetUserBookings(*emptypb.Empty, BookingService_GetUserBookingsServer) error {
+	return status.Errorf(codes.Unimplemented, "method GetUserBookings not implemented")
 }
 func (UnimplementedBookingServiceServer) GetBookingsBySection(*GetBookingsBySectionRequest, BookingService_GetBookingsBySectionServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetBookingsBySection not implemented")
@@ -156,6 +195,27 @@ func _BookingService_Purchase_Handler(srv interface{}, ctx context.Context, dec 
 		return srv.(BookingServiceServer).Purchase(ctx, req.(*PurchaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
+}
+
+func _BookingService_GetUserBookings_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(emptypb.Empty)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(BookingServiceServer).GetUserBookings(m, &bookingServiceGetUserBookingsServer{stream})
+}
+
+type BookingService_GetUserBookingsServer interface {
+	Send(*Booking) error
+	grpc.ServerStream
+}
+
+type bookingServiceGetUserBookingsServer struct {
+	grpc.ServerStream
+}
+
+func (x *bookingServiceGetUserBookingsServer) Send(m *Booking) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 func _BookingService_GetBookingsBySection_Handler(srv interface{}, stream grpc.ServerStream) error {
@@ -236,6 +296,11 @@ var BookingService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "GetUserBookings",
+			Handler:       _BookingService_GetUserBookings_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "GetBookingsBySection",
 			Handler:       _BookingService_GetBookingsBySection_Handler,

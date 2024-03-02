@@ -45,8 +45,11 @@ message RemoveBookingRequest {
 }
 
 service BookingService {
-  // Public APIs (Note: required user to be logged in to use these APIs)
+  // Public APIs (Guest can use this)
   rpc Purchase(PurchaseRequest) returns (Booking) {}
+
+  // Gets bookings made by current user (user must be authenticated)
+  rpc GetUserBookings(google.protobuf.Empty) returns (stream Booking) {}
 
   // Admin APIs
   rpc GetBookingsBySection(GetBookingsBySectionRequest) returns (stream Booking) {}

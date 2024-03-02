@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,10 +50,13 @@ func (s *BookingServer) isAdmin(ctx context.Context) bool {
 func (s *BookingServer) Purchase(ctx context.Context, req *pb.PurchaseRequest) (*pb.Booking, error) {
 	log.Printf("Received: %v\n", req)
 
-	// Make sure user is authenticated. non-admin can work too.
-	_, authenticated := s.isUserAuthenticated(ctx)
+	// Check if user is authenticated otherwise use email from request to allow guest to make a purchase
+	email, authenticated := s.isUserAuthenticated(ctx)
 	if !authenticated {
-		return nil, status.Errorf(codes.Unauthenticated, "user is not authenticated")
+		email = strings.ToLower(req.User.EmailAddress)
+	}
+	if email == "" {
+		return nil, status.Errorf(codes.Unauthenticated, "Email is not provided")
 	}
 
 	booking := datastore.Booking{
@@ -70,7 +74,8 @@ func (s *BookingServer) Purchase(ctx context.Context, req *pb.PurchaseRequest) (
 		PricePaid: 20.00, // Currency field is eliminated because of timing constraints
 	}
 
-	booking, err := s.db.Purchase(booking)
+	// email is the user's id
+	booking, err := s.db.Purchase(email, booking)
 	if err != nil {
 		return nil, status.Errorf(codes.Unknown, "failed to purchase: %v", err)
 	}
@@ -92,6 +97,43 @@ func (s *BookingServer) Purchase(ctx context.Context, req *pb.PurchaseRequest) (
 	}
 
 	return pbBooking, nil
+}
+
+func (s *BookingServer) GetUserBookings(req *emptypb.Empty, stream pb.BookingService_GetUserBookingsServer) error {
+	ctx := stream.Context()
+
+	// Make sure user is authenticated. non-admin can work too.
+	email, authenticated := s.isUserAuthenticated(ctx)
+	if !authenticated {
+		return status.Errorf(codes.Unauthenticated, "user is not authenticated")
+	}
+
+	// email is also the user's id
+	userId := email
+
+	// Stream the bookings response
+	for _, booking := range s.db.GetUserBookings(userId) {
+		err := stream.Send(&pb.Booking{
+			BookingId: booking.BookingID,
+			User: &pb.User{
+				EmailAddress: booking.User.EmailAddress,
+				FirstName:    booking.User.FirstName,
+				LastName:     booking.User.LastName,
+			},
+			Seat: &pb.Seat{
+				SectionId: booking.Seat.SectionID,
+				SeatId:    booking.Seat.SeatID,
+			},
+			From:      booking.From,
+			To:        booking.To,
+			PricePaid: booking.PricePaid,
+		})
+		if err != nil {
+			return status.Errorf(codes.Unknown, "failed to stream booking: %v", err)
+		}
+	}
+
+	return nil
 }
 
 func (s *BookingServer) GetBookingsBySection(req *pb.GetBookingsBySectionRequest, stream pb.BookingService_GetBookingsBySectionServer) error {

@@ -24,3 +24,10 @@ Example project to demonstrate auth using JWT token, and permissions access via 
 5. Run the unit tests:
 
     `make test` or `make test-verbose`
+
+    Tests are available at `/cmd/server/grpc_test.go`
+
+
+## Requirements
+
+Please check the instructions shared with you
